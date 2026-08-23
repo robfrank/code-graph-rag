@@ -5,7 +5,7 @@ import sys
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.config import ModelConfig, format_missing_api_key_errors
+from codebase_rag.config import AppConfig, ModelConfig, format_missing_api_key_errors
 
 
 def test_import_does_not_walk_parent_directories_for_dotenv(tmp_path) -> None:
@@ -126,3 +126,136 @@ class TestFormatMissingApiKeyErrors:
         msg = format_missing_api_key_errors("OpenAI")
         assert "OPENAI_API_KEY" in msg
         assert "OpenAI" in msg
+
+
+class TestGraphBackendDefaulting:
+    """GRAPH_BACKEND must default to memgraph rather than fail validation
+    when a user blanks it out -- the obvious way to "turn it off" in .env
+    (see docs/getting-started/choosing-a-graph-backend.md)."""
+
+    def test_unset_defaults_to_memgraph(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GRAPH_BACKEND", raising=False)
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.GRAPH_BACKEND == cs.GraphBackend.MEMGRAPH
+
+    def test_empty_string_defaults_to_memgraph(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GRAPH_BACKEND", "")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.GRAPH_BACKEND == cs.GraphBackend.MEMGRAPH
+
+    def test_whitespace_only_defaults_to_memgraph(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GRAPH_BACKEND", "   ")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.GRAPH_BACKEND == cs.GraphBackend.MEMGRAPH
+
+    def test_explicit_arcadedb_is_respected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GRAPH_BACKEND", "arcadedb")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.GRAPH_BACKEND == cs.GraphBackend.ARCADEDB
+
+    def test_padded_value_is_normalized(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GRAPH_BACKEND", " memgraph ")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.GRAPH_BACKEND == cs.GraphBackend.MEMGRAPH
+
+    def test_mixed_case_value_is_normalized(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GRAPH_BACKEND", "Memgraph")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.GRAPH_BACKEND == cs.GraphBackend.MEMGRAPH
+
+    def test_padded_mixed_case_arcadedb_is_normalized(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GRAPH_BACKEND", "  ArcadeDB  ")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.GRAPH_BACKEND == cs.GraphBackend.ARCADEDB
+
+    def test_invalid_value_still_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GRAPH_BACKEND", "not-a-backend")
+        with pytest.raises(ValueError, match="GRAPH_BACKEND"):
+            AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+
+
+class TestArcadeHttpScheme:
+    """ARCADEDB_HTTP_SCHEME threads into ArcadeHttpClient, which refuses
+    plaintext Basic auth to a non-loopback host (see test_arcade_http.py's
+    TestPlaintextCredentialsRefused for the enforcement itself)."""
+
+    def test_defaults_to_http(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("ARCADEDB_HTTP_SCHEME", raising=False)
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.ARCADEDB_HTTP_SCHEME == cs.ArcadeHttpScheme.HTTP
+
+    def test_accepts_https(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARCADEDB_HTTP_SCHEME", "https")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.ARCADEDB_HTTP_SCHEME == cs.ArcadeHttpScheme.HTTPS
+
+    def test_invalid_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARCADEDB_HTTP_SCHEME", "ftp")
+        with pytest.raises(ValueError, match="ARCADEDB_HTTP_SCHEME"):
+            AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+
+
+class TestArcadeBoltScheme:
+    """ARCADEDB_BOLT_SCHEME threads into ArcadeDBIngestor, which refuses
+    plaintext Bolt traffic (credentials plus all graph data) to a
+    non-loopback host (see test_arcadedb_ingestor.py's
+    TestBoltPlaintextCredentialsRefused for the enforcement itself)."""
+
+    def test_defaults_to_bolt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("ARCADEDB_BOLT_SCHEME", raising=False)
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.ARCADEDB_BOLT_SCHEME == cs.ArcadeBoltScheme.BOLT
+
+    def test_accepts_bolt_s(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARCADEDB_BOLT_SCHEME", "bolt+s")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.ARCADEDB_BOLT_SCHEME == cs.ArcadeBoltScheme.BOLT_S
+
+    def test_accepts_bolt_ssc(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARCADEDB_BOLT_SCHEME", "bolt+ssc")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert config.ARCADEDB_BOLT_SCHEME == cs.ArcadeBoltScheme.BOLT_SSC
+
+    def test_invalid_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ARCADEDB_BOLT_SCHEME", "ftp")
+        with pytest.raises(ValueError, match="ARCADEDB_BOLT_SCHEME"):
+            AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+
+
+class TestArcadePortRange:
+    """ARCADEDB_BOLT_PORT and ARCADEDB_HTTP_PORT are bare ints in .env, so a
+    typo like 0, a negative number, or an out-of-range value would otherwise
+    pass validation and only fail later at connect. Mirrors the gt=0
+    precedent already set by ARCADEDB_TX_TIMEOUT_S."""
+
+    @pytest.mark.parametrize("field", ["ARCADEDB_BOLT_PORT", "ARCADEDB_HTTP_PORT"])
+    def test_accepts_a_valid_port(
+        self, monkeypatch: pytest.MonkeyPatch, field: str
+    ) -> None:
+        monkeypatch.setenv(field, "8182")
+        config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+        assert getattr(config, field) == 8182
+
+    @pytest.mark.parametrize("field", ["ARCADEDB_BOLT_PORT", "ARCADEDB_HTTP_PORT"])
+    def test_rejects_zero(self, monkeypatch: pytest.MonkeyPatch, field: str) -> None:
+        monkeypatch.setenv(field, "0")
+        with pytest.raises(ValueError, match=field):
+            AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+
+    @pytest.mark.parametrize("field", ["ARCADEDB_BOLT_PORT", "ARCADEDB_HTTP_PORT"])
+    def test_rejects_above_65535(
+        self, monkeypatch: pytest.MonkeyPatch, field: str
+    ) -> None:
+        monkeypatch.setenv(field, "65536")
+        with pytest.raises(ValueError, match=field):
+            AppConfig(_env_file=None)  # ty: ignore[unknown-argument]

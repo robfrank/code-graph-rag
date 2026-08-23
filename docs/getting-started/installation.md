@@ -16,6 +16,11 @@ description: "Install Code-Graph-RAG and set up Memgraph for multi-language code
 
 ### Installing cmake and ripgrep
 
+<!-- mkdocs-material tab syntax ("===") needs these fenced blocks 4-space
+     indented, which a strict parser reads as an indented code block; see
+     .markdownlint.jsonc for the full reason. -->
+<!-- markdownlint-disable MD046 -->
+
 === "macOS"
 
     ```bash
@@ -37,6 +42,8 @@ description: "Install Code-Graph-RAG and set up Memgraph for multi-language code
     ```
 
     ripgrep may need to be installed from EPEL or via `cargo install ripgrep`.
+
+<!-- markdownlint-enable MD046 -->
 
 ## Install from PyPI
 
@@ -102,6 +109,18 @@ make dev
 ```
 
 This installs all dependencies and sets up pre-commit hooks automatically.
+
+`make dev` syncs the `arcadedb` extra so the `neo4j` driver is present —
+several unit test modules import `codebase_rag.services.graph.arcadedb` at
+collection time, and without the driver installed they fail to *collect*
+(there is no `pytest.importorskip` guard anywhere in this suite). `make
+dev` does not sync the `milvus` extra, since it is optional and not part
+of the default dev footprint. To match exactly what CI syncs and run the
+full suite locally, including Milvus-backed tests:
+
+```bash
+uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --extra arcadedb --group dev
+```
 
 ## Verify Release Artifacts
 

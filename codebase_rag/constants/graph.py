@@ -582,3 +582,196 @@ LEGACY_NODE_CONSTRAINTS: tuple[tuple[str, str], ...] = (
 
 CYPHER_MEMORY_LIMIT_SUFFIX = " QUERY MEMORY LIMIT {mb} MB"
 CYPHER_MEMORY_LIMIT_TOKEN = "QUERY MEMORY LIMIT"
+
+# MemgraphDialect.procedure_catalog: the backend-specific body of section 2b
+# of the orchestrator prompt -- the MAGE procedure names and the caveat about
+# their whole-graph scope. The engine-neutral header and framing prose around
+# it live in prompts.py's build_cypher_query_rules, which is what every
+# dialect's catalog is embedded into.
+MAGE_PROCEDURE_CATALOG = """- **Strongly connected components / recursion clusters**: `CALL nxalg.strongly_connected_components() YIELD components`
+- **Weakly connected components**: `CALL weakly_connected_components.get() YIELD node, component_id` or `CALL wcc.get_components(nodes, edges)`
+- **Cycles**: `CALL nxalg.simple_cycles() YIELD cycles` (all cycles), `CALL nxalg.find_cycle() YIELD cycle` (one cycle)
+- **All simple paths between two nodes (bounded)**: `CALL nxalg.all_simple_paths(source, target, cutoff)` or `CALL algo.all_simple_paths(source, target, [:CALLS], maxHops)`
+- **Shortest path**: `CALL nxalg.shortest_path(source, target)` or `CALL algo.astar(source, target, config)`
+- **Reachability**: `CALL graph_util.ancestors(node)`, `CALL graph_util.descendants(node)`
+- **Topological order (DAGs only)**: `CALL nxalg.topological_sort() YIELD nodes` or `CALL graph_util.topological_sort()`
+- **PageRank**: `CALL pagerank.get() YIELD node, rank` or `CALL nxalg.pagerank() YIELD node, rank`
+- **Betweenness centrality**: `CALL betweenness_centrality.get() YIELD node, betweenness_centrality`
+- **Degree centrality**: `CALL degree_centrality.get() YIELD node, degree`
+- **Communities**: `CALL community_detection.get() YIELD node, community_id`, `CALL leiden_community_detection.get() YIELD node, community_id`
+- **Articulation / bridges**: `CALL bridges.get() YIELD ...`, `CALL nxalg.biconnected_components() YIELD nodes`
+- **Dominators**: `CALL nxalg.immediate_dominators(start) YIELD node, dominator`
+- **Path expansion (bounded BFS over filtered edges)**: `CALL path.expand(start, relationships, labels, minHops, maxHops) YIELD path`
+
+Important: MAGE procedures named `nxalg.*` and several others operate on the **entire graph**, ignoring edge-type filters. To restrict to a specific edge type (e.g., only `CALLS`), follow the procedure call with a `WHERE` clause that checks `EXISTS((a)-[:CALLS]->(b))` or use `path.expand` which accepts a relationship-type filter."""
+
+
+# ArcadeDB HTTP: Bolt accepts Cypher only, so schema DDL (which is SQL)
+# goes over the REST endpoint instead.
+class ArcadeHttpScheme(StrEnum):
+    HTTP = "http"
+    HTTPS = "https"
+
+
+ARCADE_HTTP_SCHEME = ArcadeHttpScheme.HTTP
+# Hosts ArcadeHttpClient (and ArcadeDBIngestor, for Bolt) trust to receive
+# Basic auth credentials in plaintext over an unencrypted scheme. Anything
+# else must use a TLS scheme -- see exceptions.ARCADE_PLAINTEXT_CREDENTIALS_REMOTE
+# and exceptions.ARCADE_BOLT_PLAINTEXT_CREDENTIALS_REMOTE.
+ARCADE_LOOPBACK_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+# ArcadeDB Bolt: carries all graph data (and the same username/password as
+# the HTTP client) over the neo4j driver. `bolt` is plaintext; `bolt+s` is
+# TLS with full certificate verification; `bolt+ssc` is TLS that accepts a
+# self-signed certificate -- these three are the neo4j driver's own URI
+# schemes, not an ArcadeDB-specific vocabulary.
+class ArcadeBoltScheme(StrEnum):
+    BOLT = "bolt"
+    BOLT_S = "bolt+s"
+    BOLT_SSC = "bolt+ssc"
+
+
+ARCADE_BOLT_SCHEME = ArcadeBoltScheme.BOLT
+# Schemes that carry Bolt traffic over TLS; anything not in this set is
+# plaintext and therefore subject to the ARCADE_LOOPBACK_HOSTS guard.
+ARCADE_BOLT_TLS_SCHEMES: frozenset[ArcadeBoltScheme] = frozenset(
+    {ArcadeBoltScheme.BOLT_S, ArcadeBoltScheme.BOLT_SSC}
+)
+ARCADE_COMMAND_PATH = "/api/v1/command/{database}"
+ARCADE_LANG_SQL = "sql"
+ARCADE_KEY_LANGUAGE = "language"
+ARCADE_KEY_COMMAND = "command"
+ARCADE_KEY_RESULT = "result"
+ARCADE_HTTP_TIMEOUT_S = 30.0
+
+# ArcadeDB schema DDL templates. Every unique key in _NODE_LABEL_UNIQUE_KEYS
+# is a string type (name, qualified_name, absolute_path), so hard-coding
+# STRING here is correct for all of them; a per-label type table would be
+# needed only if that stopped being true.
+ARCADE_DDL_VERTEX_TYPE = "CREATE VERTEX TYPE {label} IF NOT EXISTS"
+ARCADE_DDL_EDGE_TYPE = "CREATE EDGE TYPE {rel_type} IF NOT EXISTS"
+ARCADE_DDL_PROPERTY = "CREATE PROPERTY {label}.{prop} IF NOT EXISTS STRING"
+ARCADE_DDL_UNIQUE_INDEX = "CREATE INDEX IF NOT EXISTS ON {label} ({prop}) UNIQUE"
+
+# ArcadeDB is MVCC/optimistic: parallel MERGE into a shared vertex raises
+# these, and they are worth retrying. Memgraph's engine does not produce them.
+ARCADE_RETRYABLE_SUBSTRINGS: tuple[str, ...] = (
+    "concurrent modification",
+    "concurrentmodification",
+    "transient",
+    "neo.transienterror",
+)
+ARCADE_BENIGN_SUBSTRINGS: tuple[str, ...] = ("already exists",)
+ARCADE_ALLOWED_PROCEDURE_PREFIXES: frozenset[str] = frozenset({"algo."})
+
+# Names confirmed to resolve over Cypher CALL against a live ArcadeDB 26.8.1
+# server (scripts/probe_arcade_procedures.py). ArcadeDB documents only the
+# Java GraphAlgorithms API; the Cypher CALL surface is undocumented and does
+# not match the marketing algorithm list (e.g. `algo.betweennessCentrality`
+# does not resolve; `algo.betweenness` does). Re-run the probe script before
+# adding a name here -- do not add on the strength of the Java docs alone.
+VERIFIED_ARCADE_PROCEDURES: tuple[str, ...] = (
+    "algo.pageRank",
+    "algo.articleRank",
+    "algo.betweenness",
+    "algo.closeness",
+    "algo.hits",
+    "algo.eccentricity",
+    "algo.wcc",
+    "algo.scc",
+    "algo.louvain",
+    "algo.leiden",
+    "algo.labelPropagation",
+    "algo.slpa",
+    "algo.triangleCount",
+    "algo.localClusteringCoefficient",
+    "algo.longestPath",
+    "algo.topologicalSort",
+    "algo.dijkstra",
+    "algo.allSimplePaths",
+)
+
+# (title, CALL-argument text, YIELD-column text) for each name in
+# VERIFIED_ARCADE_PROCEDURES, observed by calling the bare procedure (or, for
+# the two pathfinding procedures, by binding real vertices with MATCH first)
+# and reading `result.keys()`. Keyed by the same strings as
+# VERIFIED_ARCADE_PROCEDURES so the catalog text below cannot name a
+# procedure that constant does not also list.
+_ARCADE_PROCEDURE_INFO: dict[str, tuple[str, str, str]] = {
+    "algo.pageRank": ("PageRank", "", "node, score"),
+    "algo.articleRank": ("ArticleRank", "", "node, score"),
+    "algo.betweenness": ("Betweenness centrality", "", "node, score"),
+    "algo.closeness": ("Closeness centrality", "", "node, score"),
+    "algo.hits": ("HITS (hub/authority)", "", "node, hubScore, authorityScore"),
+    "algo.eccentricity": (
+        "Eccentricity",
+        "",
+        "node, eccentricity, isCenter, isPeripheral",
+    ),
+    "algo.wcc": ("Weakly connected components", "", "node, componentId"),
+    "algo.scc": ("Strongly connected components", "", "node, componentId"),
+    "algo.louvain": ("Louvain communities", "", "node, communityId, modularity"),
+    "algo.leiden": ("Leiden communities", "", "nodeId, community"),
+    "algo.labelPropagation": ("Label propagation communities", "", "node, communityId"),
+    "algo.slpa": ("SLPA communities", "", "node, communities"),
+    "algo.triangleCount": (
+        "Triangle count",
+        "",
+        "node, triangles, clusteringCoefficient",
+    ),
+    "algo.localClusteringCoefficient": (
+        "Local clustering coefficient",
+        "",
+        "node, localClusteringCoefficient",
+    ),
+    "algo.longestPath": ("Longest path from each node", "", "node, distance, source"),
+    "algo.topologicalSort": ("Topological sort", "", "node, order"),
+    "algo.dijkstra": (
+        "Shortest path (Dijkstra)",
+        "start, end, 'REL_TYPE', 'OUT'",
+        "path",
+    ),
+    "algo.allSimplePaths": (
+        "All simple paths up to a depth",
+        "start, end, 'REL_TYPE', 5",
+        "path",
+    ),
+}
+
+_missing_proc_info = set(VERIFIED_ARCADE_PROCEDURES) - set(_ARCADE_PROCEDURE_INFO)
+if _missing_proc_info:
+    raise RuntimeError(
+        f"VERIFIED_ARCADE_PROCEDURES missing from _ARCADE_PROCEDURE_INFO: "
+        f"{sorted(_missing_proc_info)}."
+    )
+
+
+def _build_arcade_procedure_catalog() -> str:
+    lines = []
+    for name in VERIFIED_ARCADE_PROCEDURES:
+        title, args, yields = _ARCADE_PROCEDURE_INFO[name]
+        lines.append(f"- **{title}**: `CALL {name}({args}) YIELD {yields}`")
+    bullets = "\n".join(lines)
+    return f"""{bullets}
+
+Important: every procedure above except `algo.dijkstra` and `algo.allSimplePaths`
+yields any column holding a node reference -- `node`, `nodeId`, `source`, or
+any other -- as a **record-id string** such as `"#46:0"`, not a node you can
+read properties from (e.g. `algo.longestPath` yields both `node` and
+`source` this way). To get properties, match the node separately by its
+stored key rather than writing `node.qualified_name` or `source.qualified_name`.
+
+`algo.dijkstra` and `algo.allSimplePaths` require real vertices, not
+record-id strings: `MATCH (start), (end) WHERE ... WITH start, end CALL
+algo.dijkstra(start, end, 'REL_TYPE', 'OUT') YIELD path RETURN path`. Their
+`path` result carries full node objects, unlike the record-id strings above.
+
+Verified but NOT included above because the probe could not confirm correct
+behaviour: `algo.personalizedPageRank` (its `node` column comes back `null`
+on ArcadeDB 26.8.1) and `algo.astar`, `algo.bellmanFord`, `algo.kShortestPaths`
+(all three accept a call and return a zero-length, edge-less path even when a
+real path exists between the given vertices). Do not call these four."""
+
+
+ARCADE_PROCEDURE_CATALOG = _build_arcade_procedure_catalog()

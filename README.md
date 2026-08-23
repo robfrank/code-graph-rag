@@ -42,7 +42,7 @@
 
 # Code-Graph-RAG
 
-Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
+Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowledge graph of its structure in Memgraph or ArcadeDB, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
 
 <p align="center">
   <img src="./assets/demo.gif" alt="demo">
@@ -51,9 +51,12 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowl
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
+- **ArcadeDB Backend**: The code graph can now be stored in ArcadeDB as well as Memgraph, selected with `GRAPH_BACKEND=arcadedb`. Both engines run the same conformance suite on every change. Memgraph remains the default.
 - **Java Taint Improvements**: Enhanced taint tracking in Java, including handling JDK shims, chained call receivers, literal arguments, and type-test patterns.
 - **C# Taint Propagation**: Improved taint propagation in C# with refinements to argument binding, tuple deconstruction, and await plumbing methods.
 - **Semantic Frontend Enhancements**: Added in-process Jedi semantic frontend for Python and re-run semantic frontends on the watch path for more accurate analysis.
+- **Protocol Buffer Indexing**: Introduced a canonical protobuf index with provenance manifest and a verify command for improved data integrity.
+- **Structural Analysis**: Added structural snapshot diffs between protobuf indexes and structural ast-grep support for seven additional languages.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -74,11 +77,11 @@ Point Code-Graph-RAG at a repository and it reads every source file, extracts fu
 
 The system has two components:
 
-1. **Multi-language parser.** A Tree-sitter based parser reads the codebase and ingests functions, classes, methods, modules, and their relationships into Memgraph under a single language-agnostic schema.
+1. **Multi-language parser.** A Tree-sitter-based parser reads the codebase and ingests functions, classes, methods, modules, and their relationships into the knowledge graph (Memgraph by default, or ArcadeDB) under a single language-agnostic schema.
 2. **RAG system** (`codebase_rag/`). An interactive CLI that turns natural language into Cypher queries, retrieves matching code, and drives AI-powered editing and optimisation.
 
-```
-Source Code -> Tree-sitter Parser -> AST Analysis -> Memgraph Knowledge Graph
+```text
+Source Code -> Tree-sitter Parser -> AST Analysis -> Knowledge Graph (Memgraph or ArcadeDB)
                                                              |
 User Query -> AI Model (Cypher Gen) -> Cypher Query -> Graph Results -> Response
 ```
@@ -126,7 +129,7 @@ To run code newer than the latest release, install from git:
 uv tool install "code-graph-rag[treesitter-full,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
 ```
 
-You also need Docker (for Memgraph), `cmake`, and `ripgrep`. Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
+You also need Docker (for Memgraph, or ArcadeDB if you opt into that backend with the `arcadedb` extra), `cmake`, and `ripgrep`. Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
 
 ## Quick Start
 

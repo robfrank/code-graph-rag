@@ -104,7 +104,7 @@ class TestMemgraphIngestorInit:
 
 class TestContextManager:
     def test_enter_connects_to_memgraph(self) -> None:
-        with patch("codebase_rag.services.graph_service.mgclient") as mock_mgclient:
+        with patch("codebase_rag.services.graph.memgraph.mgclient") as mock_mgclient:
             mock_conn = MagicMock()
             mock_mgclient.connect.return_value = mock_conn
 
@@ -117,7 +117,7 @@ class TestContextManager:
             assert result is ingestor
 
     def test_enter_passes_auth_when_provided(self) -> None:
-        with patch("codebase_rag.services.graph_service.mgclient") as mock_mgclient:
+        with patch("codebase_rag.services.graph.memgraph.mgclient") as mock_mgclient:
             mock_conn = MagicMock()
             mock_mgclient.connect.return_value = mock_conn
 
@@ -131,7 +131,7 @@ class TestContextManager:
             )
 
     def test_enter_omits_auth_when_not_provided(self) -> None:
-        with patch("codebase_rag.services.graph_service.mgclient") as mock_mgclient:
+        with patch("codebase_rag.services.graph.memgraph.mgclient") as mock_mgclient:
             mock_conn = MagicMock()
             mock_mgclient.connect.return_value = mock_conn
 
@@ -338,7 +338,7 @@ class TestEnsureConstraints:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
         executed_queries: list[str] = []
 
-        def capture_query(query: str) -> list[dict]:
+        def capture_query(query: str, params: object = None) -> list[dict]:
             executed_queries.append(query)
             return []
 
@@ -355,7 +355,7 @@ class TestEnsureConstraints:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
         call_count = 0
 
-        def fail_first_create(query: str) -> list[dict]:
+        def fail_first_create(query: str, params: object = None) -> list[dict]:
             nonlocal call_count
             call_count += 1
             if query.startswith("CREATE CONSTRAINT") and call_count == 4:
@@ -378,7 +378,7 @@ class TestEnsureConstraints:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
         executed_queries: list[str] = []
 
-        def fail_first_name_index(query: str) -> list[dict]:
+        def fail_first_name_index(query: str, params: object = None) -> list[dict]:
             executed_queries.append(query)
             if query == f"CREATE INDEX ON :{NODE_NAME_INDEXES[0]}(name);":
                 raise RuntimeError("Index already exists")

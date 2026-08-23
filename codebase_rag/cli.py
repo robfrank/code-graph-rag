@@ -37,8 +37,8 @@ from .main import (
     update_model_settings,
 )
 from .parser_loader import load_parsers
+from .services.graph import GraphIngestor
 from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
-from .services.graph_service import MemgraphIngestor
 from .services.protobuf_service import ProtobufFileIngestor
 from .services.provenance import (
     capture_description,
@@ -222,7 +222,7 @@ def _stdin_is_interactive() -> bool:
         return False
 
 
-def _projects_in_graph(ingestor: MemgraphIngestor) -> list[str] | None:
+def _projects_in_graph(ingestor: GraphIngestor) -> list[str] | None:
     """Every project in the graph, or None when the graph cannot be read.
 
     None is NOT an empty graph: treating a failed enumeration as "no other
@@ -237,7 +237,7 @@ def _projects_in_graph(ingestor: MemgraphIngestor) -> list[str] | None:
 
 
 def _confirm_destructive_clean(
-    ingestor: MemgraphIngestor, project_name: str, assume_yes: bool
+    ingestor: GraphIngestor, project_name: str, assume_yes: bool
 ) -> None:
     """Abort unless the user accepts losing every other project in the graph."""
     if assume_yes:
@@ -393,7 +393,7 @@ def _resolve_and_validate_repo(repo_path: str | None) -> Path:
     return resolved
 
 
-def _cleanup_project_embeddings(ingestor: MemgraphIngestor, project_name: str) -> None:
+def _cleanup_project_embeddings(ingestor: GraphIngestor, project_name: str) -> None:
     rows = ingestor.fetch_all(
         cs.CYPHER_QUERY_PROJECT_NODE_IDS,
         {cs.KEY_PROJECT_NAME: project_name},
@@ -813,12 +813,18 @@ def export(
         app_context.console.print(style(cs.CLI_ERR_ONLY_JSON, cs.Color.RED))
         raise typer.Exit(1)
 
-    _info(style(cs.CLI_MSG_CONNECTING_MEMGRAPH, cs.Color.CYAN))
-
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
     try:
         with connect_memgraph(effective_batch_size) as ingestor:
+            _info(
+                style(
+                    cs.MSG_CONNECTED_GRAPH_BACKEND.format(
+                        backend=cs.GRAPH_BACKEND_DISPLAY_NAMES[settings.GRAPH_BACKEND]
+                    ),
+                    cs.Color.CYAN,
+                )
+            )
             _info(style(cs.CLI_MSG_EXPORTING_DATA, cs.Color.CYAN))
 
             if not export_graph_to_file(ingestor, output):
@@ -1105,10 +1111,13 @@ def stop_command() -> None:
     rich_help_panel=ch.PANEL_MANAGE,
 )
 def status_command() -> None:
-    status = StackManager().status()
+    mgr = StackManager()
+    status = mgr.status()
+    detail = f" [{status.graph_detail}]" if status.graph_detail else ""
     app_context.console.print(
         f"stack:    {status.state.value} "
-        f"(memgraph={status.memgraph_endpoint} reachable={status.memgraph_reachable}, "
+        f"({mgr.backend.value}={status.graph_endpoint} "
+        f"reachable={status.graph_reachable}{detail}, "
         f"qdrant={status.qdrant_endpoint} reachable={status.qdrant_reachable})"
     )
     app_context.console.print(f"compose:  {status.compose_file}")

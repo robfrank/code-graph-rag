@@ -1,4 +1,4 @@
-.PHONY: help all install dev test test-parallel test-integration test-all test-parallel-all clean python build-grammars watch readme lint format typecheck check pre-commit release jvm-agent
+.PHONY: help all install dev test test-parallel test-integration test-integration-memgraph test-integration-arcadedb test-all test-parallel-all clean python build-grammars watch readme lint format typecheck check pre-commit release jvm-agent
 
 PYTHON := uv run
 
@@ -25,7 +25,7 @@ python: ## Install project dependencies for Python only
 	uv sync
 
 dev: ## Setup development environment (install deps + pre-commit hooks)
-	uv sync --extra treesitter-full --extra test --extra semantic --group dev
+	uv sync --extra treesitter-full --extra test --extra semantic --extra arcadedb --group dev
 	$(PYTHON) pre-commit install
 	$(PYTHON) pre-commit install --hook-type commit-msg
 	@echo "✅ Development environment ready!"
@@ -38,6 +38,19 @@ test-parallel: ## Run unit tests in parallel (fast, no Docker)
 
 test-integration: ## Run integration tests (requires Docker)
 	$(PYTHON) pytest -m "integration" -v
+
+test-integration-memgraph: ## Run integration tests against Memgraph only
+	# `-k memgraph` alone would miss `TestLegacyPathKeyMigration`, which is
+	# Memgraph-only by construction but not parametrized (and so carries no
+	# "memgraph" id) -- see its docstring in test_cross_project_folder_identity.py.
+	$(PYTHON) pytest -m "integration" -k "memgraph or TestLegacyPathKeyMigration" -v
+
+# `make dev` syncs the `arcadedb` extra (matching CI), so the `neo4j` driver
+# it requires is present and these tests collect normally. There is no
+# `pytest.importorskip` guard anywhere in this suite; without the extra the
+# ArcadeDB test modules fail to *collect* instead of skipping.
+test-integration-arcadedb: ## Run integration tests against ArcadeDB only (needs: uv sync --extra arcadedb)
+	$(PYTHON) pytest -m "integration" -k arcadedb -v
 
 test-all: ## Run all tests including integration and e2e (requires Docker)
 	$(PYTHON) pytest -v

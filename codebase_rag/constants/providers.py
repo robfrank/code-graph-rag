@@ -72,6 +72,25 @@ class VectorStoreBackend(StrEnum):
     MILVUS = "milvus"
 
 
+class GraphBackend(StrEnum):
+    MEMGRAPH = "memgraph"
+    ARCADEDB = "arcadedb"
+
+
+# Display names for user-facing text (health-check output, etc.). The enum
+# values themselves stay lowercase because they double as compose profile
+# names and settings values; "ArcadeDB" is not recoverable from "arcadedb"
+# by a generic .title() (that yields "Arcadedb"), so this is a lookup
+# rather than a string transform.
+GRAPH_BACKEND_DISPLAY_NAMES: dict[GraphBackend, str] = {
+    GraphBackend.MEMGRAPH: "Memgraph",
+    GraphBackend.ARCADEDB: "ArcadeDB",
+}
+
+
+MODULE_NEO4J = "neo4j"
+
+
 # Batches between torch.mps.empty_cache() calls: dropping the Metal
 # allocator cache every batch costs ~21% throughput (M-series UniXcoder
 # run), so release it periodically to bound growth.

@@ -20,11 +20,14 @@ from .cypher_queries import (
     CYPHER_EXAMPLE_TASKS,
 )
 from .schema_builder import GRAPH_SCHEMA_DEFINITION
+from .services.graph.factory import get_dialect
 from .tools.tool_descriptions import AgenticToolName
 from .types_defs import ToolNames
 
 if TYPE_CHECKING:
     from pydantic_ai import Tool
+
+    from .services.graph.dialect import GraphDialect
 
 
 def extract_tool_names(tools: list["Tool"]) -> ToolNames:
@@ -48,66 +51,59 @@ def extract_tool_names(tools: list["Tool"]) -> ToolNames:
     )
 
 
-CYPHER_QUERY_RULES = """**2. Critical Cypher Query Rules**
-
-- **ALWAYS Return Specific Properties with Aliases**: Do NOT return whole nodes (e.g., `RETURN n`). You MUST return specific properties with clear aliases (e.g., `RETURN n.name AS name`).
+_CYPHER_RULES_BODY = """- **ALWAYS Return Specific Properties with Aliases**: Do NOT return whole nodes (e.g., `RETURN n`). You MUST return specific properties with clear aliases (e.g., `RETURN n.name AS name`).
 - **Use `STARTS WITH` for Paths**: When matching paths, always use `STARTS WITH` for robustness (e.g., `WHERE n.path STARTS WITH 'workflows/src'`). Do not use `=`.
 - **Use `ENDS WITH` for qualified_name**: The `qualified_name` property contains full paths like `'Project.folder.subfolder.ClassName'`. When users mention a class, function, or method by its short name (e.g., "VatManager"), use `ENDS WITH` to match: `WHERE c.qualified_name ENDS WITH '.VatManager'`. Do NOT use `{name: 'VatManager'}` equality matching.
 - **Use `toLower()` for Searches**: For case-insensitive searching on string properties, use `toLower()`.
 - **Querying Lists**: To check if a list property (like `decorators`) contains an item, use the `ANY` or `IN` clause (e.g., `WHERE 'flow' IN n.decorators`).
 - **Match the asked-about relationship explicitly and RETURN it**: For questions about callers, callees, usage, or dependencies, match the specific edge (e.g., `(caller)-[r:CALLS]->(callee)`) and include `type(r) AS relationship` in the RETURN clause. A bare node list is ambiguous — the file that *defines* or *imports* a function is not a *caller* of it, and the consumer can only tell them apart if the relationship type is in the results.
 - **Prefer multi-label matches over guessing one label**: When the node kind is uncertain, match `(n:Function|Method)` (or `(n:Function|Method|Class)`) instead of a single label — a wrong single label silently returns nothing. Leave the *other* end of a relationship pattern unlabeled when any node kind is a valid answer (e.g., module-level code also has `CALLS` edges).
-- **NEVER use unbounded variable-length paths**: Patterns like `[:CALLS*]`, `[*]`, `[:CALLS*1..]` enumerate every path in the graph and exhaust memory. Always cap with an upper bound, e.g. `[:CALLS*1..6]`. If you genuinely need unbounded reachability, use a MAGE procedure (see Section 2b) instead of variable-length Cypher.
+- **NEVER use unbounded variable-length paths**: Patterns like `[:CALLS*]`, `[*]`, `[:CALLS*1..]` enumerate every path in the graph and exhaust memory. Always cap with an upper bound, e.g. `[:CALLS*1..6]`. If you genuinely need unbounded reachability, use a graph-algorithm procedure (see Section 2b) instead of variable-length Cypher."""
 
-**2b. Graph Algorithm Procedures (MAGE)**
+_CYPHER_RULES_FALLBACK = """**2c. When Cypher Can't Answer**
 
-For algorithmic questions (longest/shortest paths, cycles, recursion clusters, centrality, communities, reachability), prefer calling a MAGE procedure over writing variable-length Cypher. Cypher path patterns enumerate all matches with no memoization, so they OOM on cyclic graphs; MAGE procedures run real graph algorithms in bounded memory.
-
-Use these read-only procedures (call them with `CALL <procedure>(...) YIELD ... RETURN ...`):
-
-- **Strongly connected components / recursion clusters**: `CALL nxalg.strongly_connected_components() YIELD components`
-- **Weakly connected components**: `CALL weakly_connected_components.get() YIELD node, component_id` or `CALL wcc.get_components(nodes, edges)`
-- **Cycles**: `CALL nxalg.simple_cycles() YIELD cycles` (all cycles), `CALL nxalg.find_cycle() YIELD cycle` (one cycle)
-- **All simple paths between two nodes (bounded)**: `CALL nxalg.all_simple_paths(source, target, cutoff)` or `CALL algo.all_simple_paths(source, target, [:CALLS], maxHops)`
-- **Shortest path**: `CALL nxalg.shortest_path(source, target)` or `CALL algo.astar(source, target, config)`
-- **Reachability**: `CALL graph_util.ancestors(node)`, `CALL graph_util.descendants(node)`
-- **Topological order (DAGs only)**: `CALL nxalg.topological_sort() YIELD nodes` or `CALL graph_util.topological_sort()`
-- **PageRank**: `CALL pagerank.get() YIELD node, rank` or `CALL nxalg.pagerank() YIELD node, rank`
-- **Betweenness centrality**: `CALL betweenness_centrality.get() YIELD node, betweenness_centrality`
-- **Degree centrality**: `CALL degree_centrality.get() YIELD node, degree`
-- **Communities**: `CALL community_detection.get() YIELD node, community_id`, `CALL leiden_community_detection.get() YIELD node, community_id`
-- **Articulation / bridges**: `CALL bridges.get() YIELD ...`, `CALL nxalg.biconnected_components() YIELD nodes`
-- **Dominators**: `CALL nxalg.immediate_dominators(start) YIELD node, dominator`
-- **Path expansion (bounded BFS over filtered edges)**: `CALL path.expand(start, relationships, labels, minHops, maxHops) YIELD path`
-
-Important: MAGE procedures named `nxalg.*` and several others operate on the **entire graph**, ignoring edge-type filters. To restrict to a specific edge type (e.g., only `CALLS`), follow the procedure call with a `WHERE` clause that checks `EXISTS((a)-[:CALLS]->(b))` or use `path.expand` which accepts a relationship-type filter.
-
-**2c. When Cypher Can't Answer**
-
-If a question cannot be expressed as a bounded Cypher pattern or as a single MAGE procedure call (e.g., "longest call chain in a graph with cycles"), return your best bounded approximation rather than an unbounded path query. Examples:
-- "longest call chain" → `CALL nxalg.strongly_connected_components() YIELD components RETURN components` (let the orchestrator post-process), or use `CALL path.expand` with a generous but finite `maxHops`.
-- "find a deeply-nested call site" → use a bounded depth such as `[:CALLS*1..10]` with `ORDER BY ... LIMIT 1`."""
+If a question cannot be expressed as a bounded Cypher pattern or as a single graph-algorithm procedure call (e.g., "longest call chain in a graph with cycles"), return your best bounded approximation rather than an unbounded path query. Examples:
+- "longest call chain" -> call a strongly-connected-components procedure from Section 2b and post-process the result.
+- "find a deeply-nested call site" -> use a bounded depth such as `[:CALLS*1..10]` with `ORDER BY ... LIMIT 1`."""
 
 
-def build_graph_schema_and_rules() -> str:
-    return f"""You are an expert AI assistant for analyzing codebases using a **hybrid retrieval system**: a **Memgraph knowledge graph** for structural queries and a **semantic code search engine** for intent-based discovery.
+def build_cypher_query_rules(procedure_catalog: str) -> str:
+    return f"""**2. Critical Cypher Query Rules**
+
+{_CYPHER_RULES_BODY}
+
+**2b. Graph Algorithm Procedures**
+
+For algorithmic questions (longest/shortest paths, cycles, recursion clusters,
+centrality, communities, reachability), prefer calling a procedure over writing
+variable-length Cypher. Cypher path patterns enumerate all matches with no
+memoization, so they OOM on cyclic graphs; these procedures run real graph
+algorithms in bounded memory.
+
+Call them with `CALL <procedure>(...) YIELD ... RETURN ...`:
+
+{procedure_catalog}
+
+{_CYPHER_RULES_FALLBACK}"""
+
+
+def build_graph_schema_and_rules(dialect: "GraphDialect | None" = None) -> str:
+    resolved = dialect or get_dialect()
+    return f"""You are an expert AI assistant for analyzing codebases using a **hybrid retrieval system**: a **knowledge graph** for structural queries and a **semantic code search engine** for intent-based discovery.
 
 **1. Graph Schema Definition**
 The database contains information about a codebase, structured with the following nodes and relationships.
 
 {GRAPH_SCHEMA_DEFINITION}
 
-{CYPHER_QUERY_RULES}
+{build_cypher_query_rules(resolved.procedure_catalog)}
 """
-
-
-GRAPH_SCHEMA_AND_RULES = build_graph_schema_and_rules()
 
 
 def _format_active_projects_block(active_projects: list[str] | None) -> str:
     if not active_projects:
         return (
-            "\n**Project Scope**: This Memgraph database may contain multiple "
+            "\n**Project Scope**: This knowledge graph may contain multiple "
             "indexed projects. Call `list_projects` early to enumerate them, then "
             "scope graph queries by filtering on the `qualified_name` prefix "
             "(e.g., `WHERE n.qualified_name STARTS WITH 'projectName.'`).\n"
@@ -254,11 +250,14 @@ def _format_cypher_project_scope(active_projects: list[str] | None) -> str:
     )
 
 
-def build_cypher_system_prompt(active_projects: list[str] | None = None) -> str:
+def build_cypher_system_prompt(
+    active_projects: list[str] | None = None,
+    dialect: "GraphDialect | None" = None,
+) -> str:
     return f"""
 You are an expert translator that converts natural language questions about code structure into precise Neo4j Cypher queries.
 
-{GRAPH_SCHEMA_AND_RULES}
+{build_graph_schema_and_rules(dialect)}
 {_format_cypher_project_scope(active_projects)}
 **3. Query Optimization Rules**
 
@@ -325,16 +324,12 @@ Provide only the Cypher query.
 """
 
 
-# Backwards-compatible default (no project scope injected)
-CYPHER_SYSTEM_PROMPT = build_cypher_system_prompt()
-
-
 # Stricter prompt for less capable open-source/local models (e.g., Ollama)
 def build_local_cypher_system_prompt(active_projects: list[str] | None = None) -> str:
     return f"""
 You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher query. Do not add explanations or markdown.
 
-{GRAPH_SCHEMA_AND_RULES}
+{build_graph_schema_and_rules()}
 {_format_cypher_project_scope(active_projects)}
 **CRITICAL RULES FOR QUERY GENERATION:**
 1.  **NO `UNION`**: Never use the `UNION` clause. Generate a single, simple `MATCH` query.
@@ -414,10 +409,6 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
     {CYPHER_EXAMPLE_PROJECT_SCOPED}
     ```
 """
-
-
-# Backwards-compatible default (no project scope injected)
-LOCAL_CYPHER_SYSTEM_PROMPT = build_local_cypher_system_prompt()
 
 
 OPTIMIZATION_PROMPT = """

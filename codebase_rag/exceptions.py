@@ -101,7 +101,52 @@ AUTH_INCOMPLETE = (
 # Access control errors (used with raise)
 ACCESS_DENIED = "Access denied: Cannot access files outside the project root."
 
+# Graph backend selection errors
+GRAPH_BACKEND_UNAVAILABLE = (
+    "GRAPH_BACKEND is '{backend}' but its driver is not installed. "
+    "Install it with: pip install 'code-graph-rag[{extra}]'"
+)
+GRAPH_BACKEND_AUTH_REQUIRED = (
+    "Backend '{backend}' requires credentials: set ARCADEDB_USERNAME and "
+    "ARCADEDB_PASSWORD. Its Bolt listener rejects unauthenticated connections."
+)
+ARCADE_HTTP_FAILED = (
+    "ArcadeDB HTTP command failed ({status}): {detail}\nCommand: {command}"
+)
+ARCADE_NO_HTTP_CLIENT = (
+    "ArcadeDBDialect needs an HTTP client to run schema DDL; construct it "
+    "with ArcadeDBDialect(http=ArcadeHttpClient(...))."
+)
+ARCADE_CREDENTIALS_REQUIRED = (
+    "ArcadeDB requires credentials (a username and password): its Bolt "
+    "listener rejects the 'none' auth scheme."
+)
+ARCADE_NOT_CONNECTED = "Not connected to ArcadeDB."
+ARCADE_PLAINTEXT_CREDENTIALS_REMOTE = (
+    "Refusing to send ArcadeDB Basic auth credentials in plaintext to "
+    "non-loopback host '{host}' over ARCADE_HTTP_SCHEME=http. Either set "
+    "ARCADEDB_HTTP_SCHEME=https, or point ARCADEDB_HOST at a loopback "
+    "address (localhost, 127.0.0.1, ::1) -- e.g. run ArcadeDB locally or "
+    "reach it through an SSH tunnel."
+)
+ARCADE_BOLT_PLAINTEXT_CREDENTIALS_REMOTE = (
+    "Refusing to send ArcadeDB Bolt credentials (and all graph data) in "
+    "plaintext to non-loopback host '{host}' over ARCADEDB_BOLT_SCHEME=bolt. "
+    "Either set ARCADEDB_BOLT_SCHEME=bolt+s (TLS, verified certificate) or "
+    "bolt+ssc (TLS, self-signed certificate), or point ARCADEDB_HOST at a "
+    "loopback address (localhost, 127.0.0.1, ::1) -- e.g. run ArcadeDB "
+    "locally or reach it through an SSH tunnel."
+)
+
 
 # Exception classes
 class LLMGenerationError(Exception):
     pass
+
+
+class GraphBackendUnavailableError(RuntimeError):
+    """The selected graph backend's driver is not installed."""
+
+
+class ArcadeHttpError(RuntimeError):
+    """A non-2xx response from ArcadeDB's HTTP command endpoint."""

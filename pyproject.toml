@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.0.728"
+version = "0.0.731"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -124,6 +124,7 @@ treesitter-full = [
     "tree-sitter-php>=0.24.1",
     "tree-sitter-c-sharp>=0.23.5",
     "tree-sitter-dart>=0.1.0",
+    "tree-sitter-sql>=0.3.11",
 ]
 
 semantic = [
@@ -142,6 +143,10 @@ ast-grep = [
 ]
 python-semantics = [
     "jedi>=0.19",
+]
+
+arcadedb = [
+    "neo4j>=5.28,<6",
 ]
 
 [tool.ruff]

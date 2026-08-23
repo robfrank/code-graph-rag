@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+from codebase_rag.constants import GraphBackend
 from codebase_rag.stack import constants as stack_cs
 from codebase_rag.stack.manager import StackError, StackManager
 
@@ -107,7 +108,7 @@ def test_check_docker_raises_when_compose_missing(stack_home: Path) -> None:
 def test_status_returns_stopped_when_nothing_reachable(stack_home: Path) -> None:
     mgr = StackManager(home=stack_home, package_compose=Path("/dev/null"))
     with (
-        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=False),
+        patch("codebase_rag.stack.manager.wait_for_graph", return_value=False),
         patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=False),
     ):
         status = mgr.status()
@@ -117,23 +118,61 @@ def test_status_returns_stopped_when_nothing_reachable(stack_home: Path) -> None
 def test_status_returns_running_when_both_reachable(stack_home: Path) -> None:
     mgr = StackManager(home=stack_home, package_compose=Path("/dev/null"))
     with (
-        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch("codebase_rag.stack.manager.wait_for_graph", return_value=True),
         patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
     ):
         status = mgr.status()
     assert status.state == stack_cs.StackState.RUNNING
-    assert status.memgraph_reachable
+    assert status.graph_reachable
     assert status.qdrant_reachable
 
 
-def test_status_returns_partial_when_only_memgraph_reachable(stack_home: Path) -> None:
+def test_status_returns_partial_when_only_graph_reachable(stack_home: Path) -> None:
     mgr = StackManager(home=stack_home, package_compose=Path("/dev/null"))
     with (
-        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch("codebase_rag.stack.manager.wait_for_graph", return_value=True),
         patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=False),
     ):
         status = mgr.status()
     assert status.state == stack_cs.StackState.PARTIAL
+
+
+def test_status_leaves_graph_detail_none_when_graph_reachable(
+    stack_home: Path,
+) -> None:
+    mgr = StackManager(home=stack_home, package_compose=Path("/dev/null"))
+    with (
+        patch("codebase_rag.stack.manager.wait_for_graph", return_value=True),
+        patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
+    ):
+        status = mgr.status()
+    assert status.graph_detail is None
+
+
+def test_status_surfaces_which_arcadedb_transport_is_down(
+    stack_home: Path,
+) -> None:
+    # "reachable=False" alone can't tell an operator whether ArcadeDB's Bolt
+    # listener or its HTTP endpoint is the one down; status() must fill in
+    # graph_detail so cgr daemon status can say so.
+    mgr = StackManager(
+        home=stack_home,
+        package_compose=Path("/dev/null"),
+        backend=GraphBackend.ARCADEDB,
+    )
+    with (
+        patch("codebase_rag.stack.manager.wait_for_graph", return_value=False),
+        patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
+        patch(
+            "codebase_rag.stack.manager.graph_reachability_detail",
+            return_value="bolt ok, http unreachable (schema changes will fail)",
+        ) as mock_detail,
+    ):
+        status = mgr.status()
+    assert status.graph_detail == "bolt ok, http unreachable (schema changes will fail)"
+    mock_detail.assert_called_once_with(
+        GraphBackend.ARCADEDB, mgr.graph_host, mgr.graph_bolt_port, mgr.graph_http_port
+    )
 
 
 def test_compose_cmd_uses_project_and_file(stack_home: Path, tmp_path: Path) -> None:
@@ -148,13 +187,40 @@ def test_compose_cmd_uses_project_and_file(stack_home: Path, tmp_path: Path) -> 
     assert cmd[-2:] == ["up", "-d"]
 
 
+@pytest.mark.parametrize(
+    ("backend", "expected_profile"),
+    [(GraphBackend.MEMGRAPH, "memgraph"), (GraphBackend.ARCADEDB, "arcadedb")],
+)
+def test_compose_cmd_activates_only_the_configured_backends_profile(
+    stack_home: Path,
+    tmp_path: Path,
+    backend: GraphBackend,
+    expected_profile: str,
+) -> None:
+    # Memgraph and ArcadeDB collide on Bolt port 7687, so both compose
+    # services carry a profile and neither is active unless explicitly
+    # selected (docker-compose.yaml). `--profile <backend>` on every
+    # generated command is the ONLY thing that keeps `cgr daemon` from ever
+    # starting them concurrently -- a regression that silently dropped it
+    # would pass every other test here while reopening that exact collision.
+    src = _make_compose_source(tmp_path)
+    mgr = StackManager(home=stack_home, package_compose=src, backend=backend)
+    cmd = mgr._compose_cmd("up", "-d")
+    assert "--profile" in cmd
+    profile_index = cmd.index("--profile")
+    assert cmd[profile_index + 1] == expected_profile
+    # And the other backend's profile must never be activated alongside it.
+    other_profile = "arcadedb" if expected_profile == "memgraph" else "memgraph"
+    assert other_profile not in cmd
+
+
 def test_ensure_running_skips_docker_when_already_up(
     stack_home: Path, tmp_path: Path
 ) -> None:
     src = _make_compose_source(tmp_path)
     mgr = StackManager(home=stack_home, package_compose=src)
     with (
-        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch("codebase_rag.stack.manager.wait_for_graph", return_value=True),
         patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
         patch.object(mgr, "up") as mock_up,
         patch.object(mgr, "wait_healthy") as mock_wait,
@@ -181,9 +247,7 @@ def test_ensure_running_starts_when_stopped(stack_home: Path, tmp_path: Path) ->
         reachable_state["qdrant"] = True
 
     with (
-        patch(
-            "codebase_rag.stack.manager.wait_for_memgraph", side_effect=memgraph_check
-        ),
+        patch("codebase_rag.stack.manager.wait_for_graph", side_effect=memgraph_check),
         patch("codebase_rag.stack.manager.wait_for_qdrant", side_effect=qdrant_check),
         patch.object(mgr, "up", side_effect=fake_up) as mock_up,
         patch.object(mgr, "wait_healthy") as mock_wait,

@@ -318,13 +318,13 @@ MG_DELETING_PROJECT = "--- Deleting project: {project_name} ---"
 MG_PROJECT_DELETED = "--- Project {project_name} deleted. ---"
 MG_ENSURING_CONSTRAINTS = "Ensuring constraints..."
 MG_CONSTRAINTS_DONE = "Constraints checked/created."
+MG_ENSURING_INDEXES = "Ensuring label-property indexes for MERGE performance..."
+MG_INDEXES_DONE = "Indexes checked/created."
 MG_LEGACY_PURGE = (
     "Purged {count} Folder/File node(s) written by the superseded "
     "relative-path key (issue #897); re-run with --update-graph for "
     "affected projects to rebuild their containment."
 )
-MG_ENSURING_INDEXES = "Ensuring label-property indexes for MERGE performance..."
-MG_INDEXES_DONE = "Indexes checked/created."
 MG_NODE_BUFFER_FLUSH = (
     "Node buffer reached batch size ({size}). Performing incremental flush."
 )
@@ -362,6 +362,42 @@ MG_FETCH_QUERY = "Executing fetch query: {query} with params: {params}"
 MG_WRITE_QUERY = "Executing write query: {query} with params: {params}"
 MG_EXPORTING = "Exporting graph data..."
 MG_EXPORTED = "Exported {nodes} nodes and {rels} relationships"
+
+# ArcadeDB logs
+ARCADE_CONNECTING = "Connecting to ArcadeDB at {uri}..."
+ARCADE_CONNECTED = "ArcadeDB connection established."
+ARCADE_DISCONNECTED = "ArcadeDB connection closed."
+ARCADE_EXCEPTION = "Exception during ArcadeDB session: {error}"
+ARCADE_FLUSH_ERROR = "Failed to flush during cleanup: {error}"
+ARCADE_FETCH_QUERY = "Executing ArcadeDB read query"
+ARCADE_WRITE_QUERY = "Executing ArcadeDB write query"
+ARCADE_ENSURING_SCHEMA = "Ensuring ArcadeDB schema (types, properties, indexes)..."
+ARCADE_SCHEMA_DONE = "ArcadeDB schema ready."
+ARCADE_BATCH_ERROR = "!!! Batch Cypher Error: {error}"
+ARCADE_CYPHER_QUERY = "    Query: {query}"
+ARCADE_NO_CONSTRAINT = (
+    "No unique constraint defined for label '{label}'. Skipping flush."
+)
+ARCADE_NODES_FLUSHED = "Flushed {flushed} of {total} buffered nodes."
+ARCADE_RELS_FLUSHED = (
+    "Flushed {total} relationships ({success} successful, {failed} failed)."
+)
+ARCADE_RELS_DEDUPED = (
+    "Collapsed {count} duplicate relationship row(s) sharing a MERGE pattern "
+    "within this flush before sending."
+)
+ARCADE_LABEL_FLUSH_ERROR = "Error flushing label group '{label}': {error}"
+ARCADE_REL_FLUSH_ERROR = "Error flushing relationship group '{pattern}': {error}"
+ARCADE_CLEANING_DB = "--- Cleaning ArcadeDB database... ---"
+ARCADE_DB_CLEANED = "--- ArcadeDB database cleaned. ---"
+ARCADE_DELETING_PROJECT = "--- Deleting project: {project_name} ---"
+ARCADE_PROJECT_DELETED = "--- Project {project_name} deleted. ---"
+
+# Graph dialect logs
+GRAPH_RETRY_TRANSIENT = (
+    "Transient write conflict (attempt {attempt}/{attempts}), "
+    "retrying in {delay:.3f}s: {error}"
+)
 
 # LLM/Cypher logs
 CYPHER_GENERATING = "  [CypherGenerator] Generating query for: '{query}'"
@@ -811,7 +847,7 @@ MCP_SERVER_UNKNOWN_TOOL = "[GraphCode MCP] Unknown tool: {name}"
 MCP_SERVER_TOOL_ERROR = "[GraphCode MCP] Error executing tool '{name}': {error}"
 MCP_SERVER_STARTING = "[GraphCode MCP] Starting MCP server..."
 MCP_SERVER_CREATED = "[GraphCode MCP] Server created, starting stdio transport..."
-MCP_SERVER_CONNECTED = "[GraphCode MCP] Connected to Memgraph at {host}:{port}"
+MCP_SERVER_CONNECTED = "[GraphCode MCP] Connected to {backend} at {host}:{port}"
 MCP_SERVER_FATAL_ERROR = "[GraphCode MCP] Fatal error: {error}"
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
 MCP_HTTP_SERVER_STARTING = "[GraphCode MCP] Starting HTTP server on {host}:{port}..."

@@ -9,8 +9,9 @@ import yaml
 from loguru import logger
 
 from ..config import settings
+from ..constants import GraphBackend
 from . import constants as cs
-from .health import wait_for_memgraph, wait_for_qdrant
+from .health import graph_reachability_detail, wait_for_graph, wait_for_qdrant
 
 
 def _publishes_on_all_interfaces(mapping: object) -> bool:
@@ -47,11 +48,16 @@ class StackError(RuntimeError):
 @dataclass
 class StackStatus:
     state: cs.StackState
-    memgraph_reachable: bool
+    graph_reachable: bool
     qdrant_reachable: bool
     compose_file: Path
-    memgraph_endpoint: str
+    graph_endpoint: str
     qdrant_endpoint: str
+    # Set only when graph_reachable is False on ArcadeDB: names which of the
+    # two required transports (Bolt, HTTP) is down, since a single boolean
+    # can't distinguish "Bolt up, HTTP down" -- the split-brain failure the
+    # two-port probe exists to catch -- from both being down.
+    graph_detail: str | None = None
 
 
 class StackManager:
@@ -59,8 +65,10 @@ class StackManager:
         self,
         home: Path | None = None,
         package_compose: Path | None = None,
-        memgraph_host: str | None = None,
-        memgraph_port: int | None = None,
+        backend: GraphBackend | None = None,
+        graph_host: str | None = None,
+        graph_bolt_port: int | None = None,
+        graph_http_port: int | None = None,
         qdrant_port: int = 6333,
         project_name: str = cs.COMPOSE_PROJECT_NAME,
     ) -> None:
@@ -69,8 +77,15 @@ class StackManager:
             package_compose
             or (Path(__file__).resolve().parent / cs.PACKAGE_COMPOSE_RELATIVE).resolve()
         )
-        self.memgraph_host = memgraph_host or settings.MEMGRAPH_HOST
-        self.memgraph_port = memgraph_port or settings.MEMGRAPH_PORT
+        self.backend = backend or settings.GRAPH_BACKEND
+        if self.backend == GraphBackend.ARCADEDB:
+            self.graph_host = graph_host or settings.ARCADEDB_HOST
+            self.graph_bolt_port = graph_bolt_port or settings.ARCADEDB_BOLT_PORT
+            self.graph_http_port = graph_http_port or settings.ARCADEDB_HTTP_PORT
+        else:
+            self.graph_host = graph_host or settings.MEMGRAPH_HOST
+            self.graph_bolt_port = graph_bolt_port or settings.MEMGRAPH_PORT
+            self.graph_http_port = graph_http_port
         self.qdrant_port = qdrant_port
         self.project_name = project_name
 
@@ -165,6 +180,11 @@ class StackManager:
             raise StackError(cs.ERR_COMPOSE_NOT_AVAILABLE)
 
     def _compose_cmd(self, *args: str) -> list[str]:
+        # Memgraph and ArcadeDB both default to Bolt port 7687, so they are
+        # gated behind mutually exclusive compose profiles named after the
+        # backend (see docker-compose.yaml). Only the configured backend's
+        # profile is ever activated, keeping the two containers from ever
+        # starting concurrently and fighting over the port.
         return [
             cs.DOCKER_BIN,
             cs.DOCKER_COMPOSE_SUBCOMMAND,
@@ -172,6 +192,8 @@ class StackManager:
             self.project_name,
             "-f",
             str(self.compose_file),
+            "--profile",
+            self.backend.value,
             *args,
         ]
 
@@ -242,15 +264,21 @@ class StackManager:
     ) -> None:
         logger.info(
             cs.MSG_WAITING_FOR_HEALTH.format(
-                service=cs.SERVICE_MEMGRAPH,
-                host=self.memgraph_host,
-                port=self.memgraph_port,
+                service=self.backend.value,
+                host=self.graph_host,
+                port=self.graph_bolt_port,
             )
         )
-        if not wait_for_memgraph(self.memgraph_host, self.memgraph_port, timeout):
+        if not wait_for_graph(
+            self.backend,
+            self.graph_host,
+            self.graph_bolt_port,
+            self.graph_http_port,
+            timeout,
+        ):
             raise StackError(
                 cs.ERR_STACK_NOT_HEALTHY.format(
-                    service=cs.SERVICE_MEMGRAPH, timeout=timeout
+                    service=self.backend.value, timeout=timeout
                 )
             )
         logger.info(
@@ -268,24 +296,40 @@ class StackManager:
             )
 
     def status(self) -> StackStatus:
-        memgraph_ok = wait_for_memgraph(
-            self.memgraph_host, self.memgraph_port, timeout=0.1, interval=0.0
+        graph_ok = wait_for_graph(
+            self.backend,
+            self.graph_host,
+            self.graph_bolt_port,
+            self.graph_http_port,
+            timeout=0.1,
+            interval=0.0,
         )
         qdrant_ok = wait_for_qdrant(self.qdrant_port, timeout=0.1, interval=0.0)
-        match (memgraph_ok, qdrant_ok):
+        match (graph_ok, qdrant_ok):
             case (True, True):
                 state = cs.StackState.RUNNING
             case (False, False):
                 state = cs.StackState.STOPPED
             case _:
                 state = cs.StackState.PARTIAL
+        graph_detail = (
+            None
+            if graph_ok
+            else graph_reachability_detail(
+                self.backend,
+                self.graph_host,
+                self.graph_bolt_port,
+                self.graph_http_port,
+            )
+        )
         return StackStatus(
             state=state,
-            memgraph_reachable=memgraph_ok,
+            graph_reachable=graph_ok,
             qdrant_reachable=qdrant_ok,
             compose_file=self.compose_file,
-            memgraph_endpoint=f"{self.memgraph_host}:{self.memgraph_port}",
+            graph_endpoint=f"{self.graph_host}:{self.graph_bolt_port}",
             qdrant_endpoint=f"{cs.LOOPBACK_HOST}:{self.qdrant_port}",
+            graph_detail=graph_detail,
         )
 
     def ensure_running(self) -> StackStatus:
@@ -298,7 +342,7 @@ class StackManager:
         final = self.status()
         logger.info(
             cs.MSG_STACK_HEALTHY.format(
-                memgraph=final.memgraph_endpoint,
+                graph=final.graph_endpoint,
                 qdrant=final.qdrant_endpoint,
             )
         )

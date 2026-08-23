@@ -9,7 +9,7 @@ from typing import TypedDict, Unpack
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
@@ -166,6 +166,55 @@ class AppConfig(BaseSettings):
     MEMGRAPH_PASSWORD: str | None = None
     LAB_PORT: int = 3000
     MEMGRAPH_BATCH_SIZE: int = 1000
+
+    # Graph backend selection. MEMGRAPH_* above stay authoritative for the
+    # default backend; renaming them would break every existing .env.
+    GRAPH_BACKEND: cs.GraphBackend = cs.GraphBackend.MEMGRAPH
+
+    @field_validator("GRAPH_BACKEND", mode="before")
+    @classmethod
+    def _normalize_graph_backend(cls, value: object) -> object:
+        # An unset, empty, or blanked-out GRAPH_BACKEND env var must fall
+        # back to the default rather than fail enum validation -- blanking
+        # a value is the obvious way a user "turns it off" in .env. A
+        # non-blank value is stripped and lower-cased before the enum
+        # validates it, so whitespace padding (" memgraph ") or mixed case
+        # ("Memgraph") still resolve; a genuinely invalid value like
+        # "postgres" still fails enum validation after normalization.
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip()
+        if not normalized:
+            return cs.GraphBackend.MEMGRAPH
+        return normalized.lower()
+
+    ARCADEDB_HOST: str = "localhost"
+    ARCADEDB_BOLT_PORT: int = Field(default=7687, ge=1, le=65535)
+    ARCADEDB_HTTP_PORT: int = Field(default=2480, ge=1, le=65535)
+    ARCADEDB_USERNAME: str | None = None
+    ARCADEDB_PASSWORD: str | None = None
+    # Scheme for the schema-DDL HTTP client (ArcadeHttpClient), which sends
+    # Basic auth on every request. Defaults to http for the loopback-bound
+    # container this project ships; ArcadeHttpClient itself refuses to send
+    # plaintext Basic auth to a non-loopback ARCADEDB_HOST, so a remote host
+    # must set this to https (issue: CodeRabbit review, plaintext-creds).
+    ARCADEDB_HTTP_SCHEME: cs.ArcadeHttpScheme = cs.ArcadeHttpScheme.HTTP
+    # Scheme for the Bolt driver (ArcadeDBIngestor), which sends the same
+    # Basic auth plus every Cypher statement and all graph data. Defaults to
+    # bolt for the loopback-bound container this project ships;
+    # ArcadeDBIngestor itself refuses plaintext bolt to a non-loopback
+    # ARCADEDB_HOST, so a remote host must set this to bolt+s or bolt+ssc
+    # (second review round: the HTTP scheme was hardened but Bolt, which
+    # carries the actual data, was left wide open).
+    ARCADEDB_BOLT_SCHEME: cs.ArcadeBoltScheme = cs.ArcadeBoltScheme.BOLT
+    # ArcadeDB is multi-database; Memgraph is not. Required when selected.
+    ARCADEDB_DATABASE: str = "codegraph"
+    # Server-side transaction ceiling for ArcadeDB Bolt queries. Distinct from
+    # QUERY_TIMEOUT_S, which is the agent-side wall-clock bound applied to any
+    # backend in tools/codebase_query.py. This one substitutes for Memgraph's
+    # QUERY MEMORY LIMIT, which ArcadeDB cannot parse.
+    ARCADEDB_TX_TIMEOUT_S: float = Field(default=600.0, gt=0)
+
     AGENT_RETRIES: int = 3
     ORCHESTRATOR_OUTPUT_RETRIES: int = 100
 
